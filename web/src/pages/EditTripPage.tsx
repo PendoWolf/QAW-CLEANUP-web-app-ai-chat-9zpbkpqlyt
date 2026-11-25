@@ -1,7 +1,10 @@
 import { useEffect, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
+import { trackEvent, tripLengthDays } from "../analytics/pendo";
 import { tripsApi, type NewTrip, type Trip } from "../api/trips";
 import { TripForm } from "../components/TripForm";
+
+const TRIP_FIELDS = ["destination", "startDate", "endDate", "travelers"] as const;
 
 /** Edits an existing trip's destination, dates and travelers, then goes back to the trip list. */
 export function EditTripPage() {
@@ -21,6 +24,16 @@ export function EditTripPage() {
     try {
       setError(null);
       await tripsApi.update(tripId, changes);
+      // The trip's changes were saved. Compares the saved values with the trip as it was loaded.
+      const changedFields = trip ? TRIP_FIELDS.filter((field) => changes[field] !== trip[field]) : [];
+      trackEvent("trip_updated", {
+        tripId,
+        changedFields: [...changedFields],
+        travelers: changes.travelers,
+        tripLengthDays: tripLengthDays(changes.startDate, changes.endDate),
+        destinationChanged: changedFields.includes("destination"),
+        datesChanged: changedFields.includes("startDate") || changedFields.includes("endDate"),
+      });
       navigate("/trips");
     } catch (e) {
       setError((e as Error).message);

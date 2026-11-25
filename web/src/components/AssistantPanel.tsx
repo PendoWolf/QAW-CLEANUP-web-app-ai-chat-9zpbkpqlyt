@@ -1,5 +1,7 @@
 import { useState, type FormEvent } from "react";
+import { trackEvent } from "../analytics/pendo";
 import { sendAssistantMessage, type ChatMessage } from "../api/assistant";
+import { ApiError } from "../api/client";
 
 const SUGGESTED_PROMPTS = [
   "Suggest a 3-day itinerary for my next trip",
@@ -23,7 +25,7 @@ export function AssistantPanel({ onClose }: { onClose: () => void }) {
   const [thinking, setThinking] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const send = async (text: string) => {
+  const send = async (text: string, usedSuggestedPrompt = false) => {
     const prompt = text.trim();
     if (prompt === "" || thinking) return;
     const userMessage: ChatMessage = { id: crypto.randomUUID(), role: "user", content: prompt };
@@ -32,11 +34,30 @@ export function AssistantPanel({ onClose }: { onClose: () => void }) {
     setDraft("");
     setError(null);
     setThinking(true);
+    const startedAt = performance.now();
     try {
       const reply = await sendAssistantMessage(conversationId, conversation);
       setMessages((current) => [...current, reply.message]);
+      // The assistant answered the prompt.
+      trackEvent("assistant_response_received", {
+        conversationId,
+        messageCount: conversation.length + 1,
+        promptLength: prompt.length,
+        replyLength: reply.message.content.length,
+        usedSuggestedPrompt,
+        responseTimeMs: Math.round(performance.now() - startedAt),
+      });
     } catch (e) {
       setError((e as Error).message);
+      // The request to the assistant failed. errorStatus is 0 when there's no HTTP status,
+      // such as a network error.
+      trackEvent("assistant_response_failed", {
+        conversationId,
+        messageCount: conversation.length,
+        usedSuggestedPrompt,
+        errorStatus: e instanceof ApiError ? e.status : 0,
+        responseTimeMs: Math.round(performance.now() - startedAt),
+      });
     } finally {
       setThinking(false);
     }
@@ -73,7 +94,7 @@ export function AssistantPanel({ onClose }: { onClose: () => void }) {
             Ask me anything about planning a trip.
             <div className="suggestions">
               {SUGGESTED_PROMPTS.map((prompt) => (
-                <button key={prompt} type="button" className="secondary" onClick={() => void send(prompt)}>
+                <button key={prompt} type="button" className="secondary" onClick={() => void send(prompt, true)}>
                   {prompt}
                 </button>
               ))}
